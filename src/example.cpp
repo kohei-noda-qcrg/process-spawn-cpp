@@ -1,6 +1,9 @@
 #include "macros/unwrap.hpp"
-#include "process.hpp"
-
+#if defined(_WIN32)
+    #include "process-win.hpp"
+#else
+    #include "process.hpp"
+#endif
 namespace {
 auto run(const int argc, const char* const argv[]) -> bool {
     assert_b(argc >= 1);
