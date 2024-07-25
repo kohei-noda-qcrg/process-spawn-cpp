@@ -33,7 +33,6 @@ auto Process::start(const std::span<const char* const> argv, const std::span<con
             return false;
         }
     }
-    std::cout << "create pipe success" << std::endl;
     STARTUPINFO si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
@@ -50,7 +49,6 @@ auto Process::start(const std::span<const char* const> argv, const std::span<con
         command_line += argv[i];
         command_line += " ";
     }
-    std::cout << "command_line: " << command_line << std::endl;
     if (!CreateProcess(
             NULL,
             (LPSTR)command_line.data(),
@@ -81,15 +79,11 @@ auto Process::join(const bool force) -> std::optional<Result> {
     DWORD exit_code;
     GetExitCodeProcess(process_handle, &exit_code);
 
-    std::cout << "Close Process handle" << std::endl;
     CloseHandle(process_handle);
-    std::cout << "Close Thread handle" << std::endl;
     CloseHandle(thread_handle);
 
-    std::cout << "CloseHandle" << std::endl;
     for (int i = 0; i < 3; i += 1) {
         CloseHandle(pipes[i].output);
-        std::cout << "pipe: " << i << " closed" << std::endl;
     }
 
     return Result{
@@ -116,7 +110,6 @@ auto Process::collect_outputs() -> bool {
     
     wait_process = WaitForSingleObject(process_handle, 0);
     if (wait_process == WAIT_OBJECT_0){
-        std::cout << "process exited" << std::endl;
         status = Status::Finished;
     }
     wait_result = WaitForMultipleObjects(2, handles, FALSE, 0);
@@ -133,7 +126,6 @@ auto Process::collect_outputs() -> bool {
             if (!res || len <= 0) {
                 break;
             }
-            if (buf.size() > 0) std::cout << buf.data() << std::endl;
             auto callback = i == 0 ? on_stdout : on_stderr;
             if (callback) {
                 callback({buf.data(), size_t(len)});

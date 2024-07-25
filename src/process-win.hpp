@@ -37,7 +37,6 @@ class Process {
     HANDLE              thread_handle  = nullptr;
     Status              status = Status::Init;
     PipePair            pipes[3];
-    bool                failed = false;
 
   public:
     std::function<OnOutput> on_stdout;
