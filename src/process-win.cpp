@@ -69,34 +69,17 @@ auto Process::start(const std::span<const char* const> argv, const std::span<con
     process_handle = pi.hProcess;
     thread_handle = pi.hThread;
 
-    output_collector_event = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (output_collector_event == NULL) {
-        return false;
-    }
-
-    output_collector = std::thread(&Process::output_collector_main, this);
     return true;
 }
 
 auto Process::join(const bool force) -> std::optional<Result> {
-    assert_o(status == Status::Running);
+    assert_o(status == Status::Running || status == Status::Finished);
     status = Status::Joined;
-    std::cout << "join" << std::endl;
     assert_o(!force || TerminateProcess(process_handle, 1), "failed to kill process");
 
 
-    std::cout << "WaitForSingleObject" << std::endl;
-    WaitForSingleObject(process_handle, INFINITE);
-
-    std::cout << "GetExitCodeProcess" << std::endl;
     DWORD exit_code;
     GetExitCodeProcess(process_handle, &exit_code);
-
-    std::cout << "output_collector_event notify" << std::endl;
-    SetEvent(output_collector_event);
-    std::cout << "output_collector join" << std::endl;
-
-    output_collector.join();
 
     std::cout << "Close Process handle" << std::endl;
     CloseHandle(process_handle);
@@ -112,8 +95,6 @@ auto Process::join(const bool force) -> std::optional<Result> {
     return Result{
         .reason = exit_code == 0 ? Result::ExitReason::Exit : Result::ExitReason::Signal,
         .code = (int)exit_code,
-        .out = std::move(outputs[0]),
-        .err = std::move(outputs[1]),
     };
 }
 
@@ -129,33 +110,36 @@ auto Process::get_status() const -> Status {
     return status;
 }
 
-auto Process::output_collector_main() -> void {
-    HANDLE handles[] = { pipes[1].output, pipes[2].output, output_collector_event };
-    DWORD wait_result;
-    while (true) {
-        wait_result = WaitForMultipleObjects(3, handles, TRUE, 0);
-        std::cout << "output_collector_main, wait_result: " << wait_result << std::endl;
-        if (wait_result >= WAIT_OBJECT_0 + 2) {
-            break;
-        }
-        for (int i = 0; i < 2; i += 1) {
-            if (wait_result == WAIT_OBJECT_0 + i) {
-                DWORD len;
-                std::array<char, 256> buf;
-                while (true) {
-                    if (!ReadFile(handles[i], buf.data(), buf.size(), &len, NULL) || len <= 0) {
-                        break;
-                    }
-                    outputs[i].insert(outputs[i].end(), buf.begin(), buf.begin() + len);
-                    if(size_t(len) < buf.size()) {
-                        break;
-                    }
-                }
+auto Process::collect_outputs() -> bool {
+    HANDLE handles[] = { pipes[1].output, pipes[2].output }; 
+    DWORD wait_result, wait_process;
+    
+    wait_process = WaitForSingleObject(process_handle, 0);
+    if (wait_process == WAIT_OBJECT_0){
+        std::cout << "process exited" << std::endl;
+        status = Status::Finished;
+    }
+    wait_result = WaitForMultipleObjects(2, handles, FALSE, 0);
+    for (int i = 0; i < 2; i += 1) {
+        DWORD len;
+        std::array<char, 256> buf;
+        while (true) {
+            DWORD bytes_avail = 0;
+            auto success = PeekNamedPipe(handles[i], NULL, 0, NULL, &bytes_avail, NULL);
+            if (!success || bytes_avail == 0) {
+                break;
+            }
+            auto res = ReadFile(handles[i], buf.data(), buf.size(), &len, NULL);
+            if (!res || len <= 0) {
+                break;
+            }
+            if (buf.size() > 0) std::cout << buf.data() << std::endl;
+            auto callback = i == 0 ? on_stdout : on_stderr;
+            if (callback) {
+                callback({buf.data(), size_t(len)});
             }
         }
-    }
-    CloseHandle(handles[0]);
-    CloseHandle(handles[1]);
+    }    
+    return true;
 }
-
 } // namespace process
