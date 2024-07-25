@@ -3,6 +3,7 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -36,7 +37,6 @@ auto Process::start(const std::span<const char* const> argv, const std::span<con
             }
             nouse.close();
         }
-        output_collector = std::thread(&Process::output_collector_main, this);
         return true;
     }
 
@@ -48,11 +48,12 @@ auto Process::start(const std::span<const char* const> argv, const std::span<con
     }
     assert_b(workdir == nullptr || chdir(workdir) != -1);
     execve(argv[0], const_cast<char* const*>(argv.data()), env.empty() ? environ : const_cast<char* const*>(env.data()));
-    _exit(0);
+    warn("exec() failed: ", strerror(errno));
+    _exit(1);
 }
 
 auto Process::join(const bool force) -> std::optional<Result> {
-    assert_o(status == Status::Running);
+    assert_o(status == Status::Running || status == Status::Finished);
     status = Status::Joined;
 
     assert_o(!force || kill(pid, SIGKILL) != -1, "failed to kill process");
@@ -60,15 +61,10 @@ auto Process::join(const bool force) -> std::optional<Result> {
     auto status = int();
     assert_o(waitpid(pid, &status, 0) != -1);
 
-    output_collector_event.notify();
-    output_collector.join();
-
     const auto exitted = bool(WIFEXITED(status));
     return Result{
         .reason = exitted ? Result::ExitReason::Exit : Result::ExitReason::Signal,
         .code   = exitted ? WEXITSTATUS(status) : WTERMSIG(status),
-        .out    = std::move(outputs[0]),
-        .err    = std::move(outputs[1]),
     };
 }
 
@@ -84,37 +80,34 @@ auto Process::get_status() const -> Status {
     return status;
 }
 
-auto Process::output_collector_main() -> void {
+auto Process::collect_outputs() -> bool {
     auto fds = std::array{
         pollfd{.fd = pipes[1].output.as_handle(), .events = POLLIN},
         pollfd{.fd = pipes[2].output.as_handle(), .events = POLLIN},
-        pollfd{.fd = output_collector_event, .events = POLLIN},
     };
 
-loop:
-    assert_n(poll(fds.data(), fds.size(), -1) != -1);
+    assert_b(poll(fds.data(), fds.size(), -1) != -1);
     for(auto i = 0; i < 2; i += 1) {
         if(fds[i].revents & POLLHUP) {
             // target has exitted
-            return;
+            status = Status::Finished;
         }
-        if(!(fds[i].revents & POLLIN)) {
-            continue;
-        }
-
-        auto buf = std::array<char, 256>();
-        while(true) {
-            const auto len = read(fds[i].fd, buf.data(), buf.size());
-            if(errno == EAGAIN) {
-                break;
-            }
-            assert_n(len > 0);
-            outputs[i].insert(outputs[i].end(), buf.begin(), buf.begin() + len);
-            if(size_t(len) < buf.size()) {
-                break;
+        if(fds[i].revents & POLLIN) {
+            auto buf = std::array<char, 256>();
+            while(true) {
+                const auto len = read(fds[i].fd, buf.data(), buf.size());
+                if(errno == EAGAIN || len == 0) {
+                    break;
+                }
+                assert_b(len > 0);
+                auto callback = i == 0 ? on_stdout : on_stderr;
+                if(callback) {
+                    callback({buf.data(), size_t(len)});
+                }
             }
         }
     }
-    goto loop;
+
+    return true;
 }
 } // namespace process
