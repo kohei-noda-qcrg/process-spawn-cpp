@@ -112,7 +112,6 @@ auto Process::collect_outputs() -> bool {
     if (wait_process == WAIT_OBJECT_0){
         status = Status::Finished;
     }
-    wait_result = WaitForMultipleObjects(2, handles, FALSE, 0);
     for (int i = 0; i < 2; i += 1) {
         DWORD len;
         std::array<char, 256> buf;
