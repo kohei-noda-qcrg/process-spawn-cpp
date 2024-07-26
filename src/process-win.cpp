@@ -8,10 +8,11 @@
 namespace process {
 
 auto create_pipe(HANDLE& read_pipe, HANDLE& write_pipe) -> bool {
-    SECURITY_ATTRIBUTES saAttr;
-    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
-    saAttr.bInheritHandle = TRUE;
-    saAttr.lpSecurityDescriptor = NULL;
+    auto saAttr = SECURITY_ATTRIBUTES {
+        .nLength=sizeof(SECURITY_ATTRIBUTES), 
+        .lpSecurityDescriptor=NULL,
+        .bInheritHandle=TRUE,
+    };
     if (!CreatePipe(&read_pipe, &write_pipe, &saAttr, 0)) {
         return false;
     }
@@ -77,13 +78,13 @@ auto Process::join(const bool force) -> std::optional<Result> {
 
 
     DWORD exit_code;
-    GetExitCodeProcess(process_handle, &exit_code);
+    assert_o(GetExitCodeProcess(process_handle, &exit_code), "failed to get the exit code of the child process");
 
-    CloseHandle(process_handle);
-    CloseHandle(thread_handle);
+    assert_o(CloseHandle(process_handle), "failed to close the process handle");
+    assert_o(CloseHandle(thread_handle), "failed to close the thread handle");
 
     for (int i = 0; i < 3; i += 1) {
-        CloseHandle(pipes[i].output);
+        assert_o(CloseHandle(pipes[i].output), "failed to close the output pipe");
     }
 
     return Result{
@@ -114,7 +115,7 @@ auto Process::collect_outputs() -> bool {
     }
     for (int i = 0; i < 2; i += 1) {
         DWORD len;
-        std::array<char, 256> buf;
+        auto buf = std::array<char, 256>();
         while (true) {
             DWORD bytes_avail = 0;
             auto success = PeekNamedPipe(handles[i], NULL, 0, NULL, &bytes_avail, NULL);
